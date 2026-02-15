@@ -108,7 +108,7 @@ The state model is clear: `~/.kanbanana` for global config/state, and per-repo s
 
 **The philosophy card.** I like the idea of a first-run experience that explains the opinionated choices — worktrees, symlinks, branch-per-task. Maybe a dismissable onboarding card that lives in the backlog column on first launch: "Welcome to Kanbanana. Here's how we think about parallel development..." Brief, confident, not preachy.
 
-# AI Assistant
+# User
 
 Okay, I just thought of a really cool feature. When you create a task in the backlog, in To Do, you can have an option to essentially run this task with multiple Cline agents: kick it off with Claude and kick it off with Codex and have them both work on the same thing at the same time. Then you can see which one is better and just take the one that's better. Or you can open up a new task where you can use other tasks as context. Not only can you use GitHub issues or pull requests or linear tickets as context, but you can also use other tasks as context. This is incredibly powerful.
 
