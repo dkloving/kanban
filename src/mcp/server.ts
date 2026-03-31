@@ -7,7 +7,6 @@ import {
 	deleteTaskCommand,
 	linkTasks,
 	listTasks,
-	startTask,
 	trashTask,
 	unlinkTasks,
 	updateTaskCommand,
@@ -16,7 +15,6 @@ import {
 const KANBAN_VERSION = typeof packageJson.version === "string" ? packageJson.version : "0.1.0";
 
 const COLUMN_VALUES = ["backlog", "in_progress", "review", "trash"] as const;
-const AUTO_REVIEW_MODE_VALUES = ["commit", "pr", "move_to_trash"] as const;
 
 function createJsonToolResult(payload: unknown): { content: Array<{ type: "text"; text: string }> } {
 	return {
@@ -95,14 +93,6 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 					.describe("Project workspace path. Defaults to the server's working directory."),
 				baseRef: z.string().optional().describe("Git branch to base the task's worktree on."),
 				startInPlanMode: z.boolean().optional().describe("Whether the agent should start in plan mode."),
-				autoReviewEnabled: z
-					.boolean()
-					.optional()
-					.describe("Whether auto-review is enabled when the task finishes."),
-				autoReviewMode: z
-					.enum(AUTO_REVIEW_MODE_VALUES)
-					.optional()
-					.describe("Auto-review action: commit, pr, or move_to_trash."),
 			},
 		},
 		async (args) => {
@@ -113,8 +103,6 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 					projectPath: args.projectPath,
 					baseRef: args.baseRef,
 					startInPlanMode: args.startInPlanMode,
-					autoReviewEnabled: args.autoReviewEnabled,
-					autoReviewMode: args.autoReviewMode,
 				});
 				return createJsonToolResult(result);
 			} catch (error) {
@@ -137,11 +125,6 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 				prompt: z.string().optional().describe("Replacement task description/prompt."),
 				baseRef: z.string().optional().describe("Replacement base git branch."),
 				startInPlanMode: z.boolean().optional().describe("Whether the agent should start in plan mode."),
-				autoReviewEnabled: z.boolean().optional().describe("Whether auto-review is enabled."),
-				autoReviewMode: z
-					.enum(AUTO_REVIEW_MODE_VALUES)
-					.optional()
-					.describe("Auto-review action: commit, pr, or move_to_trash."),
 			},
 		},
 		async (args) => {
@@ -153,36 +136,6 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 					prompt: args.prompt,
 					baseRef: args.baseRef,
 					startInPlanMode: args.startInPlanMode,
-					autoReviewEnabled: args.autoReviewEnabled,
-					autoReviewMode: args.autoReviewMode,
-				});
-				return createJsonToolResult(result);
-			} catch (error) {
-				return createToolError(error);
-			}
-		},
-	);
-
-	server.registerTool(
-		"start_task",
-		{
-			title: "Start task",
-			description:
-				"Start a task session. Creates a git worktree, launches the coding agent, and moves the task to in_progress.",
-			inputSchema: {
-				taskId: z.string().min(1).describe("The ID of the task to start."),
-				projectPath: z
-					.string()
-					.optional()
-					.describe("Project workspace path. Defaults to the server's working directory."),
-			},
-		},
-		async (args) => {
-			try {
-				const result = await startTask({
-					cwd,
-					taskId: args.taskId,
-					projectPath: args.projectPath,
 				});
 				return createJsonToolResult(result);
 			} catch (error) {
