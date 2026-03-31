@@ -576,9 +576,13 @@ function createProgram(invocationArgs: string[]): Command {
 
 	program
 		.command("mcp")
-		.description("Deprecated compatibility command.")
-		.action(() => {
-			console.warn("Deprecated. Please uninstall Kanban MCP.");
+		.description("Run Kanban as a local MCP stdio server for agent integration.")
+		.option("--project-path <path>", "Project path for workspace context. Defaults to current directory.")
+		.action(async (options: { projectPath?: string }) => {
+			const { resolve } = await import("node:path");
+			const { runKanbanMcpServer } = await import("./mcp/server.js");
+			const projectPath = options.projectPath ? resolve(process.cwd(), options.projectPath) : process.cwd();
+			await runKanbanMcpServer(projectPath);
 		});
 
 	program.action(async (options: RootCommandOptions) => {

@@ -19,7 +19,7 @@ import { loadWorkspaceContext, mutateWorkspaceState } from "../state/workspace-s
 import type { RuntimeAppRouter } from "../trpc/app-router";
 
 const LIST_TASK_COLUMNS = ["backlog", "in_progress", "review", "trash"] as const;
-type ListTaskColumn = (typeof LIST_TASK_COLUMNS)[number];
+export type ListTaskColumn = (typeof LIST_TASK_COLUMNS)[number];
 type TaskCommandTarget = { taskId?: string; column?: ListTaskColumn };
 
 type ResolvedTaskCommandTarget =
@@ -37,7 +37,7 @@ interface RuntimeWorkspaceMutationResult<T> {
 	value: T;
 }
 
-type JsonRecord = Record<string, unknown>;
+export type JsonRecord = Record<string, unknown>;
 
 function toErrorMessage(error: unknown): string {
 	if (error instanceof Error && error.message.trim().length > 0) {
@@ -251,7 +251,11 @@ function findTasksInColumn(
 	}));
 }
 
-async function listTasks(input: { cwd: string; projectPath?: string; column?: ListTaskColumn }): Promise<JsonRecord> {
+export async function listTasks(input: {
+	cwd: string;
+	projectPath?: string;
+	column?: ListTaskColumn;
+}): Promise<JsonRecord> {
 	const workspace = await resolveRuntimeWorkspace(input.projectPath, input.cwd, {
 		autoCreateIfMissing: false,
 	});
@@ -309,7 +313,7 @@ async function deleteTaskWorkspace(
 	}
 }
 
-async function createTask(input: {
+export async function createTask(input: {
 	cwd: string;
 	prompt: string;
 	projectPath?: string;
@@ -359,7 +363,7 @@ async function createTask(input: {
 	};
 }
 
-async function updateTaskCommand(input: {
+export async function updateTaskCommand(input: {
 	cwd: string;
 	taskId: string;
 	projectPath?: string;
@@ -417,7 +421,7 @@ async function updateTaskCommand(input: {
 	};
 }
 
-async function linkTasks(input: {
+export async function linkTasks(input: {
 	cwd: string;
 	taskId: string;
 	linkedTaskId: string;
@@ -448,7 +452,11 @@ async function linkTasks(input: {
 	};
 }
 
-async function unlinkTasks(input: { cwd: string; dependencyId: string; projectPath?: string }): Promise<JsonRecord> {
+export async function unlinkTasks(input: {
+	cwd: string;
+	dependencyId: string;
+	projectPath?: string;
+}): Promise<JsonRecord> {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
@@ -480,7 +488,7 @@ async function unlinkTasks(input: { cwd: string; dependencyId: string; projectPa
 	};
 }
 
-async function startTask(input: { cwd: string; taskId: string; projectPath?: string }): Promise<JsonRecord> {
+export async function startTask(input: { cwd: string; taskId: string; projectPath?: string }): Promise<JsonRecord> {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
@@ -658,7 +666,7 @@ async function trashTaskById(input: {
 	};
 }
 
-async function trashTask(input: {
+export async function trashTask(input: {
 	cwd: string;
 	taskId?: string;
 	column?: ListTaskColumn;
@@ -747,7 +755,7 @@ async function trashTask(input: {
 	};
 }
 
-async function deleteTaskCommand(input: {
+export async function deleteTaskCommand(input: {
 	cwd: string;
 	taskId?: string;
 	column?: ListTaskColumn;
