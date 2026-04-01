@@ -199,6 +199,8 @@ export default function App(): ReactElement {
 		setSessions,
 	});
 
+	const allBoardCards = useMemo(() => board.columns.flatMap((column) => column.cards), [board.columns]);
+
 	const selectedCard = useMemo(() => {
 		if (!selectedTaskId) {
 			return null;
@@ -728,6 +730,7 @@ export default function App(): ReactElement {
 			onBranchRefChange={setEditTaskBranchRef}
 			mode="edit"
 			idPrefix={`inline-edit-task-${editingTaskId}`}
+			boardCards={allBoardCards}
 		/>
 	) : undefined;
 
@@ -1050,6 +1053,7 @@ export default function App(): ReactElement {
 				branchRef={newTaskBranchRef}
 				branchOptions={createTaskBranchOptions}
 				onBranchRefChange={setNewTaskBranchRef}
+				boardCards={allBoardCards}
 			/>
 			<ClearTrashDialog
 				open={isClearTrashDialogOpen}

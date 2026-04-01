@@ -5,6 +5,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import {
 	createTask,
 	deleteTaskCommand,
+	getTask,
 	linkTasks,
 	listTasks,
 	trashTask,
@@ -72,6 +73,34 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 					cwd,
 					projectPath: args.projectPath,
 					column: args.column,
+				});
+				return createJsonToolResult(result);
+			} catch (error) {
+				return createToolError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"get_task",
+		{
+			title: "Get task",
+			description:
+				"Get a single task by ID with its full details and dependencies. Use this to look up tasks referenced with # in other task prompts.",
+			inputSchema: {
+				taskId: z.string().min(1).describe("The ID of the task to look up."),
+				projectPath: z
+					.string()
+					.optional()
+					.describe("Project workspace path. Defaults to the server's working directory."),
+			},
+		},
+		async (args) => {
+			try {
+				const result = await getTask({
+					cwd,
+					taskId: args.taskId,
+					projectPath: args.projectPath,
 				});
 				return createJsonToolResult(result);
 			} catch (error) {

@@ -1,4 +1,4 @@
-export type ClineComposerCompletionKind = "mention" | "slash";
+export type ClineComposerCompletionKind = "mention" | "slash" | "task_ref";
 
 export interface ActiveClineComposerToken {
 	kind: ClineComposerCompletionKind;
@@ -66,6 +66,22 @@ export function detectActiveClineComposerToken(value: string, cursorIndex: numbe
 		};
 	}
 
+	if (token.startsWith("#")) {
+		const markerIndex = tokenStart;
+		if (!isTokenBoundaryCharacter(value[markerIndex - 1])) {
+			return null;
+		}
+		if (!/^[^\s#]*$/.test(token.slice(1))) {
+			return null;
+		}
+		return {
+			kind: "task_ref",
+			start: tokenStart,
+			end: cursorIndex,
+			query: token.slice(1),
+		};
+	}
+
 	return null;
 }
 
@@ -76,6 +92,10 @@ export function buildMentionInsertText(filePath: string): string {
 
 export function buildSlashCommandInsertText(commandName: string): string {
 	return `/${commandName}`;
+}
+
+export function buildTaskRefInsertText(taskId: string): string {
+	return `#${taskId}`;
 }
 
 export function applyClineComposerCompletion(

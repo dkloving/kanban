@@ -282,6 +282,30 @@ export async function listTasks(input: {
 	};
 }
 
+export async function getTask(input: { cwd: string; taskId: string; projectPath?: string }): Promise<JsonRecord> {
+	const workspace = await resolveRuntimeWorkspace(input.projectPath, input.cwd, {
+		autoCreateIfMissing: false,
+	});
+	const runtimeClient = createRuntimeTrpcClient(workspace.workspaceId);
+	const state = await runtimeClient.workspace.getState.query();
+
+	const record = findTaskRecord(state, input.taskId);
+	if (!record) {
+		throw new Error(`Task "${input.taskId}" was not found in workspace ${workspace.repoPath}.`);
+	}
+
+	const taskDependencies = state.board.dependencies
+		.filter((dep) => dep.fromTaskId === input.taskId || dep.toTaskId === input.taskId)
+		.map((dep) => formatDependencyRecord(state, dep));
+
+	return {
+		ok: true,
+		workspacePath: workspace.repoPath,
+		task: formatTaskRecord(state, record.task, record.columnId),
+		dependencies: taskDependencies,
+	};
+}
+
 async function stopTaskRuntimeSession(
 	runtimeClient: ReturnType<typeof createRuntimeTrpcClient>,
 	taskId: string,

@@ -498,6 +498,7 @@ export function BoardCard({
 						>
 							<div className="flex items-center gap-2" style={{ minHeight: 24 }}>
 								{statusMarker ? <div className="inline-flex items-center">{statusMarker}</div> : null}
+								<span className="text-xs font-mono text-text-tertiary shrink-0">#{card.id}</span>
 								<div ref={titleContainerRef} className="flex-1 min-w-0">
 									<p
 										ref={titleRef}
