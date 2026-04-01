@@ -411,6 +411,19 @@ export function CardDetailView({
 		return runtimeFiles.map((file) => file.path);
 	}, [runtimeFiles]);
 
+	const buildWorktreeFileUrl = useCallback(
+		(filePath: string) => {
+			const params = new URLSearchParams({
+				taskId: selection.card.id,
+				path: filePath,
+				baseRef: selection.card.baseRef,
+				...(currentProjectId ? { workspaceId: currentProjectId } : {}),
+			});
+			return `/api/worktree-file?${params.toString()}`;
+		},
+		[selection.card.id, selection.card.baseRef, currentProjectId],
+	);
+
 	const handleSelectAdjacentCard = useCallback(
 		(step: number) => {
 			const cards = selection.column.cards;
@@ -711,6 +724,7 @@ export function CardDetailView({
 												}
 												comments={diffComments}
 												onCommentsChange={setDiffComments}
+												worktreeFileUrl={buildWorktreeFileUrl}
 											/>
 											<FileTreePanel
 												workspaceFiles={isRuntimeAvailable ? runtimeFiles : null}

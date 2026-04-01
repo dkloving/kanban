@@ -16,3 +16,14 @@ export function isBinaryFilePath(filePath: string): boolean {
 	}
 	return binaryExtensionSet.has(basename.slice(dotIndex + 1).toLowerCase());
 }
+
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"]);
+
+export function isImageFilePath(filePath: string): boolean {
+	const basename = getPathBasename(filePath);
+	const dotIndex = basename.lastIndexOf(".");
+	if (dotIndex < 0 || dotIndex === basename.length - 1) {
+		return false;
+	}
+	return IMAGE_EXTENSIONS.has(basename.slice(dotIndex + 1).toLowerCase());
+}

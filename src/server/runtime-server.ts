@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
-import { join } from "node:path";
+import { extname, join, normalize, relative } from "node:path";
 
 import { createHTTPHandler } from "@trpc/server/adapters/standalone";
 import { handleClineMcpOauthCallback } from "../cline-sdk/cline-mcp-runtime-service";
@@ -23,6 +23,7 @@ import { createHooksApi } from "../trpc/hooks-api";
 import { createProjectsApi } from "../trpc/projects-api";
 import { createRuntimeApi } from "../trpc/runtime-api";
 import { createWorkspaceApi } from "../trpc/workspace-api";
+import { resolveTaskCwd } from "../workspace/task-worktree";
 import { getWebUiDir, normalizeRequestPath, readAsset } from "./assets";
 import type { RuntimeStateHub } from "./runtime-state-hub";
 import type { WorkspaceRegistry } from "./workspace-registry";
@@ -239,6 +240,72 @@ export async function createRuntimeServer(deps: CreateRuntimeServerDependencies)
 			}
 			if (pathname.startsWith("/api/trpc")) {
 				await trpcHttpHandler(req, res);
+				return;
+			}
+			if (pathname === "/api/worktree-file") {
+				const workspaceId = readWorkspaceIdFromRequest(req, requestUrl);
+				const taskId = requestUrl.searchParams.get("taskId");
+				const filePath = requestUrl.searchParams.get("path");
+				const baseRef = requestUrl.searchParams.get("baseRef");
+				if (!workspaceId || !taskId || !filePath || !baseRef) {
+					res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+					res.end('{"error":"Missing required parameters: taskId, path, baseRef"}');
+					return;
+				}
+				const normalizedPath = normalize(filePath);
+				if (normalizedPath.startsWith("..") || normalizedPath.startsWith("/")) {
+					res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+					res.end('{"error":"Invalid file path"}');
+					return;
+				}
+				try {
+					const workspaceContext = await loadWorkspaceContextById(workspaceId);
+					if (!workspaceContext) {
+						res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+						res.end('{"error":"Workspace not found"}');
+						return;
+					}
+					const taskCwd = await resolveTaskCwd({
+						cwd: workspaceContext.repoPath,
+						taskId,
+						baseRef,
+						ensure: false,
+					});
+					const absolutePath = join(taskCwd, normalizedPath);
+					const resolvedRelative = relative(taskCwd, absolutePath);
+					if (resolvedRelative.startsWith("..")) {
+						res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+						res.end('{"error":"Invalid file path"}');
+						return;
+					}
+					const fileStat = await stat(absolutePath).catch(() => null);
+					if (!fileStat || !fileStat.isFile()) {
+						res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+						res.end('{"error":"File not found"}');
+						return;
+					}
+					const ext = extname(normalizedPath).toLowerCase();
+					const mimeTypes: Record<string, string> = {
+						".png": "image/png",
+						".jpg": "image/jpeg",
+						".jpeg": "image/jpeg",
+						".gif": "image/gif",
+						".webp": "image/webp",
+						".svg": "image/svg+xml",
+						".bmp": "image/bmp",
+						".ico": "image/x-icon",
+					};
+					const contentType = mimeTypes[ext] ?? "application/octet-stream";
+					const content = await readFile(absolutePath);
+					res.writeHead(200, {
+						"Content-Type": contentType,
+						"Cache-Control": "no-store",
+					});
+					res.end(content);
+				} catch {
+					res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+					res.end('{"error":"Could not resolve worktree file"}');
+				}
 				return;
 			}
 			if (pathname.startsWith("/api/")) {
