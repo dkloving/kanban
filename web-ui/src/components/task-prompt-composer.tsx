@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	applyClineComposerCompletion,
 	buildMentionInsertText,
+	buildTaskRefInsertText,
 	detectActiveClineComposerToken,
 } from "@/components/detail-panels/cline-chat-composer-completion";
 import { type InlineCompletionItem, InlineCompletionPicker } from "@/components/inline-completion-picker";
@@ -19,9 +20,11 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { getRuntimeTrpcClient } from "@/runtime/trpc-client";
 import type { TaskImage } from "@/types";
+import type { BoardCard } from "@/types/board";
 import { useDebouncedEffect } from "@/utils/react-use";
 
 const FILE_MENTION_LIMIT = 8;
+const TASK_REF_LIMIT = 8;
 const MENTION_QUERY_DEBOUNCE_MS = 120;
 const TEXTAREA_MAX_HEIGHT = 200;
 
@@ -40,6 +43,7 @@ interface TaskPromptComposerProps {
 	autoFocus?: boolean;
 	workspaceId?: string | null;
 	showAttachImageButton?: boolean;
+	boardCards?: BoardCard[];
 }
 
 export function TaskPromptComposer({
@@ -57,6 +61,7 @@ export function TaskPromptComposer({
 	autoFocus = false,
 	workspaceId = null,
 	showAttachImageButton = true,
+	boardCards = [],
 }: TaskPromptComposerProps): ReactElement {
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -84,24 +89,27 @@ export function TaskPromptComposer({
 
 	const activeToken = useMemo(() => {
 		const token = detectActiveClineComposerToken(value, cursorIndex);
-		if (token && token.kind !== "mention") {
+		if (token && token.kind !== "mention" && token.kind !== "task_ref") {
 			return null;
 		}
 		return token;
 	}, [cursorIndex, value]);
 
+	const isMentionToken = activeToken?.kind === "mention";
+	const isTaskRefToken = activeToken?.kind === "task_ref";
+
 	useEffect(() => {
-		if (!enabled || !activeToken) {
+		if (!enabled || !isMentionToken) {
 			mentionSearchRequestIdRef.current += 1;
 			setMentionItems([]);
 			setMentionInsertTextMap(new Map());
 			setIsMentionSearchLoading(false);
 		}
-	}, [activeToken, enabled, workspaceId]);
+	}, [isMentionToken, enabled, workspaceId]);
 
 	useDebouncedEffect(
 		() => {
-			if (!enabled || !activeToken || !workspaceId) {
+			if (!enabled || !isMentionToken || !activeToken || !workspaceId) {
 				return;
 			}
 			const requestId = ++mentionSearchRequestIdRef.current;
@@ -138,12 +146,34 @@ export function TaskPromptComposer({
 			})();
 		},
 		MENTION_QUERY_DEBOUNCE_MS,
-		[activeToken, enabled, workspaceId],
+		[activeToken, isMentionToken, enabled, workspaceId],
 	);
 
+	const taskRefItems = useMemo((): InlineCompletionItem[] => {
+		if (!enabled || !isTaskRefToken || !activeToken) {
+			return [];
+		}
+		const query = activeToken.query.toLowerCase();
+		return boardCards
+			.filter((card) => {
+				if (query.length === 0) {
+					return true;
+				}
+				return card.id.toLowerCase().startsWith(query) || card.prompt.toLowerCase().includes(query);
+			})
+			.slice(0, TASK_REF_LIMIT)
+			.map((card) => {
+				const promptPreview = card.prompt.length > 60 ? `${card.prompt.slice(0, 57)}...` : card.prompt;
+				return { id: card.id, label: `#${card.id} \u2014 ${promptPreview}` };
+			});
+	}, [activeToken, boardCards, enabled, isTaskRefToken]);
+
 	const suggestions = useMemo(() => {
-		return enabled && activeToken ? mentionItems : [];
-	}, [activeToken, enabled, mentionItems]);
+		if (!enabled || !activeToken) {
+			return [];
+		}
+		return isTaskRefToken ? taskRefItems : mentionItems;
+	}, [activeToken, enabled, isTaskRefToken, mentionItems, taskRefItems]);
 
 	useEffect(() => {
 		setSelectedSuggestionIndex(0);
@@ -170,7 +200,10 @@ export function TaskPromptComposer({
 			if (!activeToken) {
 				return;
 			}
-			const insertText = mentionInsertTextMap.get(item.id) ?? `@${item.id}`;
+			const insertText =
+				activeToken.kind === "task_ref"
+					? buildTaskRefInsertText(item.id)
+					: (mentionInsertTextMap.get(item.id) ?? `@${item.id}`);
 			const next = applyClineComposerCompletion(value, activeToken, insertText);
 			onValueChange(next.value);
 			window.requestAnimationFrame(() => {

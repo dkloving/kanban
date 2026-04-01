@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { LocalStorageKey } from "@/storage/local-storage-store";
 import type { TaskAutoReviewMode, TaskImage } from "@/types";
+import type { BoardCard } from "@/types/board";
 import { isMacPlatform, pasteShortcutLabel } from "@/utils/platform";
 import { useRawLocalStorageValue } from "@/utils/react-use";
 
@@ -115,6 +116,7 @@ export function TaskCreateDialog({
 	branchRef,
 	branchOptions,
 	onBranchRefChange,
+	boardCards = [],
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -138,6 +140,7 @@ export function TaskCreateDialog({
 	branchRef: string;
 	branchOptions: BranchSelectOption[];
 	onBranchRefChange: (value: string) => void;
+	boardCards?: BoardCard[];
 }): ReactElement {
 	const [mode, setMode] = useState<"single" | "multi">("single");
 	const [createMore, setCreateMore] = useState(false);
@@ -402,6 +405,7 @@ export function TaskCreateDialog({
 							autoFocus
 							workspaceId={workspaceId}
 							showAttachImageButton={false}
+							boardCards={boardCards}
 						/>
 						<div className="flex items-center justify-between mt-1.5">
 							<p className="text-[11px] text-text-tertiary">

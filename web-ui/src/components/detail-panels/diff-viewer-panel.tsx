@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { RuntimeWorkspaceFileChange } from "@/runtime/types";
 import { buildFileTree } from "@/utils/file-tree";
-import { isBinaryFilePath } from "@/utils/is-binary-file-path";
+import { isBinaryFilePath, isImageFilePath } from "@/utils/is-binary-file-path";
 import { isMacPlatform } from "@/utils/platform";
 
 interface FileDiffGroup {
@@ -25,6 +25,8 @@ interface FileDiffGroup {
 	entries: Array<{
 		id: string;
 		isBinary: boolean;
+		isImage: boolean;
+		status: string;
 		oldText: string | null;
 		newText: string;
 	}>;
@@ -543,6 +545,7 @@ export function DiffViewerPanel({
 	comments,
 	onCommentsChange,
 	viewMode = "unified",
+	worktreeFileUrl,
 }: {
 	workspaceFiles: RuntimeWorkspaceFileChange[] | null;
 	selectedPath: string | null;
@@ -552,6 +555,7 @@ export function DiffViewerPanel({
 	comments: Map<string, DiffLineComment>;
 	onCommentsChange: (comments: Map<string, DiffLineComment>) => void;
 	viewMode?: DiffViewMode;
+	worktreeFileUrl?: (filePath: string) => string;
 }): React.ReactElement {
 	const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -566,6 +570,8 @@ export function DiffViewerPanel({
 			id: `workspace-${file.path}-${index}`,
 			path: file.path,
 			isBinary: isBinaryFilePath(file.path),
+			isImage: isImageFilePath(file.path),
+			status: file.status,
 			oldText: file.oldText,
 			newText: file.newText ?? "",
 			timestamp: 0,
@@ -592,6 +598,8 @@ export function DiffViewerPanel({
 			group.entries.push({
 				id: entry.id,
 				isBinary: entry.isBinary,
+				isImage: entry.isImage,
+				status: entry.status,
 				oldText: entry.oldText,
 				newText: entry.newText,
 			});
@@ -921,7 +929,20 @@ export function DiffViewerPanel({
 										>
 											{group.entries.map((entry) => (
 												<div key={entry.id} className="kb-diff-entry">
-													{entry.isBinary ? null : viewMode === "split" ? (
+													{entry.isBinary && entry.isImage && worktreeFileUrl ? (
+														<div className="flex items-center justify-center p-4">
+															{entry.status === "deleted" ? (
+																<p className="text-sm text-text-tertiary">Image deleted</p>
+															) : (
+																<img
+																	src={worktreeFileUrl(group.path)}
+																	alt={group.path}
+																	className="max-w-full rounded-md border border-border"
+																	style={{ maxHeight: 480 }}
+																/>
+															)}
+														</div>
+													) : entry.isBinary ? null : viewMode === "split" ? (
 														<SplitDiff
 															path={group.path}
 															oldText={entry.oldText}

@@ -7,6 +7,7 @@ import { BranchSelectDropdown, type BranchSelectOption } from "@/components/bran
 import { TaskPromptComposer } from "@/components/task-prompt-composer";
 import { Button } from "@/components/ui/button";
 import type { TaskAutoReviewMode, TaskImage } from "@/types";
+import type { BoardCard } from "@/types/board";
 import { pasteShortcutLabel } from "@/utils/platform";
 import { useDocumentEvent, useMeasure } from "@/utils/react-use";
 
@@ -62,6 +63,7 @@ export function TaskInlineCreateCard({
 	enabled = true,
 	mode = "create",
 	idPrefix = "inline-task",
+	boardCards = [],
 }: {
 	prompt: string;
 	onPromptChange: (value: string) => void;
@@ -84,6 +86,7 @@ export function TaskInlineCreateCard({
 	enabled?: boolean;
 	mode?: TaskInlineCardMode;
 	idPrefix?: string;
+	boardCards?: BoardCard[];
 }): ReactElement {
 	const promptId = `${idPrefix}-prompt-input`;
 	const planModeId = `${idPrefix}-plan-mode-toggle`;
@@ -169,6 +172,7 @@ export function TaskInlineCreateCard({
 					autoFocus
 					workspaceId={workspaceId}
 					showAttachImageButton={false}
+					boardCards={boardCards}
 				/>
 				<p className="text-[11px] text-text-tertiary mt-1 mb-0">
 					Use <code className="rounded bg-surface-3 px-1 py-px font-mono text-[11px]">@file</code> to reference
