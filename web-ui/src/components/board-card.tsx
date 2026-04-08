@@ -129,7 +129,6 @@ function getCardSessionActivity(summary: RuntimeTaskSessionSummary | undefined):
 	const activityText = hookActivity?.activityText?.trim();
 	const toolName = hookActivity?.toolName?.trim() ?? null;
 	const toolInputSummary = hookActivity?.toolInputSummary?.trim() ?? null;
-	const source = hookActivity?.source?.trim() ?? null;
 	const finalMessage = hookActivity?.finalMessage?.trim();
 	const hookEventName = hookActivity?.hookEventName?.trim() ?? null;
 	if (summary.state === "awaiting_review" && finalMessage) {
@@ -457,6 +456,9 @@ export function BoardCard({
 							onDependencyPointerDown?.(card.id, event);
 						}}
 						onClick={(event) => {
+							if (!isCardInteractive) {
+								return;
+							}
 							if (isDependencyLinking) {
 								event.preventDefault();
 								event.stopPropagation();
