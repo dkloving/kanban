@@ -203,7 +203,8 @@ function getLinkedBacklogTaskIdsReadyAfterTaskTrashed(
 	if (!taskId || board.dependencies.length === 0 || fromColumnId !== "review") {
 		return [];
 	}
-	const readyTaskIds = new Set<string>();
+	// Collect backlog tasks that depend on the task being trashed
+	const candidates = new Set<string>();
 	for (const dependency of board.dependencies) {
 		if (dependency.toTaskId !== taskId) {
 			continue;
@@ -211,9 +212,30 @@ function getLinkedBacklogTaskIdsReadyAfterTaskTrashed(
 		if (getTaskColumnId(board, dependency.fromTaskId) !== "backlog") {
 			continue;
 		}
-		readyTaskIds.add(dependency.fromTaskId);
+		candidates.add(dependency.fromTaskId);
 	}
-	return [...readyTaskIds];
+	// Filter to only those whose ALL dependencies are now finished (in trash or review).
+	// The task being trashed is moving to trash, so treat it as finished.
+	const readyTaskIds: string[] = [];
+	for (const candidateId of candidates) {
+		let allDepsFinished = true;
+		for (const dep of board.dependencies) {
+			if (dep.fromTaskId !== candidateId) {
+				continue;
+			}
+			const linkedColumnId = getTaskColumnId(board, dep.toTaskId);
+			// The task being trashed hasn't moved yet, so check explicitly
+			const isFinished = dep.toTaskId === taskId || linkedColumnId === "trash" || linkedColumnId === "review";
+			if (!isFinished) {
+				allDepsFinished = false;
+				break;
+			}
+		}
+		if (allDepsFinished) {
+			readyTaskIds.push(candidateId);
+		}
+	}
+	return readyTaskIds;
 }
 
 export function updateTaskDependencies(board: RuntimeBoardData): RuntimeBoardData {
