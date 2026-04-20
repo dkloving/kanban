@@ -8,6 +8,7 @@ import {
 	getTask,
 	linkTasks,
 	listTasks,
+	openTask,
 	trashTask,
 	unlinkTasks,
 	updateTaskCommand,
@@ -55,7 +56,7 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 		{
 			title: "List tasks",
 			description:
-				"List all tasks on the Kanban board. By default excludes trashed tasks unless the trash column is explicitly requested.",
+				"List tasks on the Kanban board. Defaults to backlog column only. Use brief=true (recommended) to get just task IDs and first-line summaries. Use get_task or open_task with a task ID to read the full prompt.",
 			inputSchema: {
 				projectPath: z
 					.string()
@@ -65,6 +66,12 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 					.enum(COLUMN_VALUES)
 					.optional()
 					.describe("Filter to a specific column: backlog, in_progress, review, or trash."),
+				brief: z
+					.boolean()
+					.optional()
+					.describe(
+						"If true, return only task ID and first line of prompt. Much smaller output — recommended for initial listing.",
+					),
 			},
 		},
 		async (args) => {
@@ -73,6 +80,7 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 					cwd,
 					projectPath: args.projectPath,
 					column: args.column,
+					brief: args.brief,
 				});
 				return createJsonToolResult(result);
 			} catch (error) {
@@ -86,7 +94,7 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 		{
 			title: "Get task",
 			description:
-				"Get a single task by ID with its full details and dependencies. Use this to look up tasks referenced with # in other task prompts.",
+				"Get a single task by ID with its full untruncated prompt and dependencies. Read-only — does NOT return a context_id. If you intend to update the task, use open_task instead.",
 			inputSchema: {
 				taskId: z.string().min(1).describe("The ID of the task to look up."),
 				projectPath: z
@@ -98,6 +106,34 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 		async (args) => {
 			try {
 				const result = await getTask({
+					cwd,
+					taskId: args.taskId,
+					projectPath: args.projectPath,
+				});
+				return createJsonToolResult(result);
+			} catch (error) {
+				return createToolError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		"open_task",
+		{
+			title: "Open task for editing",
+			description:
+				"Open a task for editing. Returns the full prompt and a context_id. You MUST call open_task before calling update_task — the update_task tool requires the context_id returned here. Workflow: open_task → read the response → pass the context_id to update_task. If someone else modified the task after you opened it, update_task will reject your change and you must open_task again.",
+			inputSchema: {
+				taskId: z.string().min(1).describe("The ID of the task to open."),
+				projectPath: z
+					.string()
+					.optional()
+					.describe("Project workspace path. Defaults to the server's working directory."),
+			},
+		},
+		async (args) => {
+			try {
+				const result = await openTask({
 					cwd,
 					taskId: args.taskId,
 					projectPath: args.projectPath,
@@ -144,9 +180,14 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 		"update_task",
 		{
 			title: "Update task",
-			description: "Update an existing task's properties. At least one field besides taskId must be provided.",
+			description:
+				"Update an existing task's prompt or properties. REQUIRED WORKFLOW: First call open_task to get the context_id, then pass it here. update_task will fail without a valid context_id. If the task was modified since you opened it, the update will be rejected — call open_task again to get a fresh context_id.",
 			inputSchema: {
 				taskId: z.string().min(1).describe("The ID of the task to update."),
+				contextId: z
+					.string()
+					.min(1)
+					.describe("Context ID from open_task. Required to prove you read the current content before updating."),
 				projectPath: z
 					.string()
 					.optional()
@@ -165,6 +206,7 @@ export function createKanbanMcpServer(cwd: string): McpServer {
 					prompt: args.prompt,
 					baseRef: args.baseRef,
 					startInPlanMode: args.startInPlanMode,
+					contextId: args.contextId,
 				});
 				return createJsonToolResult(result);
 			} catch (error) {

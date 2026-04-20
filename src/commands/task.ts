@@ -144,14 +144,19 @@ async function updateRuntimeWorkspaceState<T>(
 	runtimeClient: ReturnType<typeof createRuntimeTrpcClient>,
 	workspaceRepoPath: string,
 	mutate: (state: RuntimeWorkspaceStateResponse) => RuntimeWorkspaceMutationResult<T>,
+	historyMessage?: string,
 ): Promise<T> {
-	const mutationResponse = await mutateWorkspaceState(workspaceRepoPath, (state) => {
-		const mutation = mutate(state);
-		return {
-			board: mutation.board,
-			value: mutation.value,
-		};
-	});
+	const mutationResponse = await mutateWorkspaceState(
+		workspaceRepoPath,
+		(state) => {
+			const mutation = mutate(state);
+			return {
+				board: mutation.board,
+				value: mutation.value,
+			};
+		},
+		historyMessage,
+	);
 
 	if (mutationResponse.saved) {
 		await notifyRuntimeWorkspaceStateUpdated(runtimeClient);
@@ -255,6 +260,7 @@ export async function listTasks(input: {
 	cwd: string;
 	projectPath?: string;
 	column?: ListTaskColumn;
+	brief?: boolean;
 }): Promise<JsonRecord> {
 	const workspace = await resolveRuntimeWorkspace(input.projectPath, input.cwd, {
 		autoCreateIfMissing: false,
@@ -262,20 +268,34 @@ export async function listTasks(input: {
 	const runtimeClient = createRuntimeTrpcClient(workspace.workspaceId);
 	const state = await runtimeClient.workspace.getState.query();
 
+	const effectiveColumn = input.column ?? "backlog";
 	const tasks = state.board.columns.flatMap((boardColumn) => {
-		if (!input.column && boardColumn.id === "trash") {
+		if (boardColumn.id !== effectiveColumn) {
 			return [];
 		}
-		if (input.column && boardColumn.id !== input.column) {
-			return [];
+		if (input.brief) {
+			return boardColumn.cards.map((task) => ({
+				id: task.id,
+				prompt: task.prompt.split("\n")[0].slice(0, 150),
+			}));
 		}
 		return boardColumn.cards.map((task) => formatTaskRecord(state, task, boardColumn.id));
 	});
 
+	if (input.brief) {
+		return {
+			ok: true,
+			workspacePath: workspace.repoPath,
+			column: effectiveColumn,
+			tasks,
+			count: tasks.length,
+		};
+	}
+
 	return {
 		ok: true,
 		workspacePath: workspace.repoPath,
-		column: input.column ?? null,
+		column: effectiveColumn,
 		tasks,
 		dependencies: state.board.dependencies.map((dependency) => formatDependencyRecord(state, dependency)),
 		count: tasks.length,
@@ -303,6 +323,53 @@ export async function getTask(input: { cwd: string; taskId: string; projectPath?
 		workspacePath: workspace.repoPath,
 		task: formatTaskRecord(state, record.task, record.columnId),
 		dependencies: taskDependencies,
+	};
+}
+
+export async function openTask(input: { cwd: string; taskId: string; projectPath?: string }): Promise<JsonRecord> {
+	const workspace = await resolveRuntimeWorkspace(input.projectPath, input.cwd, {
+		autoCreateIfMissing: false,
+	});
+	const runtimeClient = createRuntimeTrpcClient(workspace.workspaceId);
+	const state = await runtimeClient.workspace.getState.query();
+
+	const record = findTaskRecord(state, input.taskId);
+	if (!record) {
+		throw new Error(`Task "${input.taskId}" was not found in workspace ${workspace.repoPath}.`);
+	}
+
+	let contextId = record.task.contextId;
+
+	// Legacy tasks created before context_id support need a real UUID assigned on first open
+	if (!contextId) {
+		const workspaceRepoPath = workspace.repoPath;
+		const result = await mutateWorkspaceState(
+			workspaceRepoPath,
+			(latestState) => {
+				const latestRecord = findTaskRecord(latestState, input.taskId);
+				if (!latestRecord) {
+					throw new Error(`Task "${input.taskId}" was not found in workspace ${workspaceRepoPath}.`);
+				}
+				const newContextId = globalThis.crypto.randomUUID();
+				latestRecord.task.contextId = newContextId;
+				return {
+					board: latestState.board,
+					value: newContextId,
+				};
+			},
+			`open-task: assign context_id to ${input.taskId}`,
+		);
+		if (result.saved) {
+			await notifyRuntimeWorkspaceStateUpdated(runtimeClient);
+		}
+		contextId = result.value;
+	}
+
+	return {
+		ok: true,
+		workspacePath: workspace.repoPath,
+		task: formatTaskRecord(state, record.task, record.columnId),
+		contextId,
 	};
 }
 
@@ -349,28 +416,33 @@ export async function createTask(input: {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
-	const created = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (state) => {
-		const resolvedBaseRef = (input.baseRef ?? "").trim() || resolveTaskBaseRef(state);
-		if (!resolvedBaseRef) {
-			throw new Error("Could not determine task base branch for this workspace.");
-		}
-		const result = addTaskToColumn(
-			state.board,
-			"backlog",
-			{
-				prompt: input.prompt,
-				startInPlanMode: input.startInPlanMode,
-				autoReviewEnabled: input.autoReviewEnabled,
-				autoReviewMode: input.autoReviewMode,
-				baseRef: resolvedBaseRef,
-			},
-			() => globalThis.crypto.randomUUID(),
-		);
-		return {
-			board: result.board,
-			value: result.task,
-		};
-	});
+	const created = await updateRuntimeWorkspaceState(
+		runtimeClient,
+		workspaceRepoPath,
+		(state) => {
+			const resolvedBaseRef = (input.baseRef ?? "").trim() || resolveTaskBaseRef(state);
+			if (!resolvedBaseRef) {
+				throw new Error("Could not determine task base branch for this workspace.");
+			}
+			const result = addTaskToColumn(
+				state.board,
+				"backlog",
+				{
+					prompt: input.prompt,
+					startInPlanMode: input.startInPlanMode,
+					autoReviewEnabled: input.autoReviewEnabled,
+					autoReviewMode: input.autoReviewMode,
+					baseRef: resolvedBaseRef,
+				},
+				() => globalThis.crypto.randomUUID(),
+			);
+			return {
+				board: result.board,
+				value: result.task,
+			};
+		},
+		`create-task: ${input.prompt.slice(0, 60)}`,
+	);
 
 	return {
 		ok: true,
@@ -396,6 +468,7 @@ export async function updateTaskCommand(input: {
 	startInPlanMode?: boolean;
 	autoReviewEnabled?: boolean;
 	autoReviewMode?: "commit" | "pr" | "move_to_trash";
+	contextId?: string;
 }): Promise<JsonRecord> {
 	if (
 		input.prompt === undefined &&
@@ -410,33 +483,39 @@ export async function updateTaskCommand(input: {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
-	const updated = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (runtimeState) => {
-		const taskRecord = findTaskRecord(runtimeState, input.taskId);
-		if (!taskRecord) {
-			throw new Error(`Task "${input.taskId}" was not found in workspace ${workspaceRepoPath}.`);
-		}
+	const updated = await updateRuntimeWorkspaceState(
+		runtimeClient,
+		workspaceRepoPath,
+		(runtimeState) => {
+			const taskRecord = findTaskRecord(runtimeState, input.taskId);
+			if (!taskRecord) {
+				throw new Error(`Task "${input.taskId}" was not found in workspace ${workspaceRepoPath}.`);
+			}
 
-		const updatedTask = updateTask(runtimeState.board, input.taskId, {
-			prompt: input.prompt ?? taskRecord.task.prompt,
-			baseRef: input.baseRef ?? taskRecord.task.baseRef,
-			startInPlanMode: input.startInPlanMode ?? taskRecord.task.startInPlanMode,
-			autoReviewEnabled: input.autoReviewEnabled ?? taskRecord.task.autoReviewEnabled === true,
-			autoReviewMode: input.autoReviewMode ?? taskRecord.task.autoReviewMode ?? "commit",
-		});
-		if (!updatedTask.updated || !updatedTask.task) {
-			throw new Error(`Task "${input.taskId}" could not be updated.`);
-		}
+			const updatedTask = updateTask(runtimeState.board, input.taskId, {
+				prompt: input.prompt ?? taskRecord.task.prompt,
+				baseRef: input.baseRef ?? taskRecord.task.baseRef,
+				startInPlanMode: input.startInPlanMode ?? taskRecord.task.startInPlanMode,
+				autoReviewEnabled: input.autoReviewEnabled ?? taskRecord.task.autoReviewEnabled === true,
+				autoReviewMode: input.autoReviewMode ?? taskRecord.task.autoReviewMode ?? "commit",
+				contextId: input.contextId,
+			});
+			if (!updatedTask.updated || !updatedTask.task) {
+				throw new Error(`Task "${input.taskId}" could not be updated.`);
+			}
 
-		const nextState: RuntimeWorkspaceStateResponse = {
-			...runtimeState,
-			board: updatedTask.board,
-		};
+			const nextState: RuntimeWorkspaceStateResponse = {
+				...runtimeState,
+				board: updatedTask.board,
+			};
 
-		return {
-			board: updatedTask.board,
-			value: formatTaskRecord(nextState, updatedTask.task, taskRecord.columnId),
-		};
-	});
+			return {
+				board: updatedTask.board,
+				value: formatTaskRecord(nextState, updatedTask.task, taskRecord.columnId),
+			};
+		},
+		`update-task: ${input.taskId}`,
+	);
 
 	return {
 		ok: true,
@@ -454,21 +533,26 @@ export async function linkTasks(input: {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
-	const dependency = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (runtimeState) => {
-		const linked = addTaskDependency(runtimeState.board, input.taskId, input.linkedTaskId);
-		if (!linked.added || !linked.dependency) {
-			throw new Error(getLinkFailureMessage(linked.reason));
-		}
+	const dependency = await updateRuntimeWorkspaceState(
+		runtimeClient,
+		workspaceRepoPath,
+		(runtimeState) => {
+			const linked = addTaskDependency(runtimeState.board, input.taskId, input.linkedTaskId);
+			if (!linked.added || !linked.dependency) {
+				throw new Error(getLinkFailureMessage(linked.reason));
+			}
 
-		const nextState: RuntimeWorkspaceStateResponse = {
-			...runtimeState,
-			board: linked.board,
-		};
-		return {
-			board: linked.board,
-			value: formatDependencyRecord(nextState, linked.dependency),
-		};
-	});
+			const nextState: RuntimeWorkspaceStateResponse = {
+				...runtimeState,
+				board: linked.board,
+			};
+			return {
+				board: linked.board,
+				value: formatDependencyRecord(nextState, linked.dependency),
+			};
+		},
+		`link-tasks: ${input.taskId} -> ${input.linkedTaskId}`,
+	);
 	return {
 		ok: true,
 		workspacePath: workspaceRepoPath,
@@ -484,27 +568,32 @@ export async function unlinkTasks(input: {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
-	const removedDependency = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (runtimeState) => {
-		const dependency =
-			runtimeState.board.dependencies.find((candidate) => candidate.id === input.dependencyId) ?? null;
-		if (!dependency) {
-			throw new Error(`Dependency "${input.dependencyId}" was not found in workspace ${workspaceRepoPath}.`);
-		}
+	const removedDependency = await updateRuntimeWorkspaceState(
+		runtimeClient,
+		workspaceRepoPath,
+		(runtimeState) => {
+			const dependency =
+				runtimeState.board.dependencies.find((candidate) => candidate.id === input.dependencyId) ?? null;
+			if (!dependency) {
+				throw new Error(`Dependency "${input.dependencyId}" was not found in workspace ${workspaceRepoPath}.`);
+			}
 
-		const unlinked = removeTaskDependency(runtimeState.board, input.dependencyId);
-		if (!unlinked.removed) {
-			throw new Error(`Dependency "${input.dependencyId}" could not be removed.`);
-		}
+			const unlinked = removeTaskDependency(runtimeState.board, input.dependencyId);
+			if (!unlinked.removed) {
+				throw new Error(`Dependency "${input.dependencyId}" could not be removed.`);
+			}
 
-		const nextState: RuntimeWorkspaceStateResponse = {
-			...runtimeState,
-			board: unlinked.board,
-		};
-		return {
-			board: unlinked.board,
-			value: formatDependencyRecord(nextState, dependency),
-		};
-	});
+			const nextState: RuntimeWorkspaceStateResponse = {
+				...runtimeState,
+				board: unlinked.board,
+			};
+			return {
+				board: unlinked.board,
+				value: formatDependencyRecord(nextState, dependency),
+			};
+		},
+		`unlink-tasks: ${input.dependencyId}`,
+	);
 	return {
 		ok: true,
 		workspacePath: workspaceRepoPath,
@@ -557,22 +646,27 @@ export async function startTask(input: { cwd: string; taskId: string; projectPat
 		}
 	}
 
-	const moved = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (latestState) => {
-		const movement = moveTaskToColumn(latestState.board, input.taskId, "in_progress");
-		if (!movement.task) {
-			throw new Error(`Task "${input.taskId}" could not be resolved.`);
-		}
-		if (!movement.moved) {
+	const moved = await updateRuntimeWorkspaceState(
+		runtimeClient,
+		workspaceRepoPath,
+		(latestState) => {
+			const movement = moveTaskToColumn(latestState.board, input.taskId, "in_progress");
+			if (!movement.task) {
+				throw new Error(`Task "${input.taskId}" could not be resolved.`);
+			}
+			if (!movement.moved) {
+				return {
+					board: latestState.board,
+					value: movement,
+				};
+			}
 			return {
-				board: latestState.board,
+				board: movement.board,
 				value: movement,
 			};
-		}
-		return {
-			board: movement.board,
-			value: movement,
-		};
-	});
+		},
+		`start-task: ${input.taskId}`,
+	);
 
 	if (!moved.moved) {
 		return {
@@ -616,41 +710,45 @@ async function trashTaskById(input: {
 	runtimeClient: ReturnType<typeof createRuntimeTrpcClient>;
 }): Promise<TrashTaskExecutionResult> {
 	await stopTaskRuntimeSession(input.runtimeClient, input.taskId);
-	const mutation = await mutateWorkspaceState(input.workspaceRepoPath, (latestState) => {
-		const latestRecord = findTaskRecord(latestState, input.taskId);
-		if (!latestRecord) {
-			throw new Error(`Task "${input.taskId}" was not found in workspace ${input.workspaceRepoPath}.`);
-		}
-		if (latestRecord.columnId === "trash") {
-			return {
-				board: latestState.board,
-				value: {
-					task: formatTaskRecord(latestState, latestRecord.task, latestRecord.columnId),
-					readyTaskIds: [] as string[],
-					alreadyInTrash: true,
-				},
-				save: false,
+	const mutation = await mutateWorkspaceState(
+		input.workspaceRepoPath,
+		(latestState) => {
+			const latestRecord = findTaskRecord(latestState, input.taskId);
+			if (!latestRecord) {
+				throw new Error(`Task "${input.taskId}" was not found in workspace ${input.workspaceRepoPath}.`);
+			}
+			if (latestRecord.columnId === "trash") {
+				return {
+					board: latestState.board,
+					value: {
+						task: formatTaskRecord(latestState, latestRecord.task, latestRecord.columnId),
+						readyTaskIds: [] as string[],
+						alreadyInTrash: true,
+					},
+					save: false,
+				};
+			}
+
+			const trashed = trashTaskAndGetReadyLinkedTaskIds(latestState.board, input.taskId);
+			if (!trashed.moved || !trashed.task) {
+				throw new Error(`Task "${input.taskId}" could not be moved to trash.`);
+			}
+
+			const nextState: RuntimeWorkspaceStateResponse = {
+				...latestState,
+				board: trashed.board,
 			};
-		}
-
-		const trashed = trashTaskAndGetReadyLinkedTaskIds(latestState.board, input.taskId);
-		if (!trashed.moved || !trashed.task) {
-			throw new Error(`Task "${input.taskId}" could not be moved to trash.`);
-		}
-
-		const nextState: RuntimeWorkspaceStateResponse = {
-			...latestState,
-			board: trashed.board,
-		};
-		return {
-			board: trashed.board,
-			value: {
-				task: formatTaskRecord(nextState, trashed.task, "trash"),
-				readyTaskIds: trashed.readyTaskIds,
-				alreadyInTrash: false,
-			},
-		};
-	});
+			return {
+				board: trashed.board,
+				value: {
+					task: formatTaskRecord(nextState, trashed.task, "trash"),
+					readyTaskIds: trashed.readyTaskIds,
+					alreadyInTrash: false,
+				},
+			};
+		},
+		`trash-task: ${input.taskId}`,
+	);
 
 	if (mutation.saved) {
 		await notifyRuntimeWorkspaceStateUpdated(input.runtimeClient);
@@ -789,55 +887,59 @@ export async function deleteTaskCommand(input: {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
-	const mutation = await mutateWorkspaceState(workspaceRepoPath, (latestState) => {
-		const latestTargetRecords =
-			target.kind === "task"
-				? (() => {
-						const record = findTaskRecord(latestState, target.taskId);
-						if (!record) {
-							throw new Error(`Task "${target.taskId}" was not found in workspace ${workspaceRepoPath}.`);
-						}
-						return [record];
-					})()
-				: findTasksInColumn(latestState, target.column);
+	const mutation = await mutateWorkspaceState(
+		workspaceRepoPath,
+		(latestState) => {
+			const latestTargetRecords =
+				target.kind === "task"
+					? (() => {
+							const record = findTaskRecord(latestState, target.taskId);
+							if (!record) {
+								throw new Error(`Task "${target.taskId}" was not found in workspace ${workspaceRepoPath}.`);
+							}
+							return [record];
+						})()
+					: findTasksInColumn(latestState, target.column);
 
-		if (latestTargetRecords.length === 0) {
+			if (latestTargetRecords.length === 0) {
+				return {
+					board: latestState.board,
+					value: {
+						deletedTaskIds: [] as string[],
+						deletedTasks: [] as JsonRecord[],
+					},
+					save: false,
+				};
+			}
+
+			const deleted = deleteTasksFromBoard(
+				latestState.board,
+				latestTargetRecords.map(({ task }) => task.id),
+			);
+			if (!deleted.deleted) {
+				return {
+					board: latestState.board,
+					value: {
+						deletedTaskIds: [] as string[],
+						deletedTasks: [] as JsonRecord[],
+					},
+					save: false,
+				};
+			}
+
+			const deletedTasks = latestTargetRecords.map(({ task, columnId }) =>
+				formatTaskRecord(latestState, task, columnId),
+			);
 			return {
-				board: latestState.board,
+				board: deleted.board,
 				value: {
-					deletedTaskIds: [] as string[],
-					deletedTasks: [] as JsonRecord[],
+					deletedTaskIds: deleted.deletedTaskIds,
+					deletedTasks,
 				},
-				save: false,
 			};
-		}
-
-		const deleted = deleteTasksFromBoard(
-			latestState.board,
-			latestTargetRecords.map(({ task }) => task.id),
-		);
-		if (!deleted.deleted) {
-			return {
-				board: latestState.board,
-				value: {
-					deletedTaskIds: [] as string[],
-					deletedTasks: [] as JsonRecord[],
-				},
-				save: false,
-			};
-		}
-
-		const deletedTasks = latestTargetRecords.map(({ task, columnId }) =>
-			formatTaskRecord(latestState, task, columnId),
-		);
-		return {
-			board: deleted.board,
-			value: {
-				deletedTaskIds: deleted.deletedTaskIds,
-				deletedTasks,
-			},
-		};
-	});
+		},
+		target.kind === "task" ? `delete-task: ${target.taskId}` : `delete-tasks: ${target.column} column`,
+	);
 
 	if (mutation.saved) {
 		await notifyRuntimeWorkspaceStateUpdated(runtimeClient);
@@ -914,13 +1016,31 @@ export function registerTaskCommand(program: Command): void {
 		.description("List Kanban tasks for a workspace.")
 		.option("--project-path <path>", "Workspace path. Defaults to current directory workspace.")
 		.option("--column <column>", "Filter column: backlog | in_progress | review | trash.", parseListColumn)
-		.action(async (options: { projectPath?: string; column?: ListTaskColumn }) => {
+		.option("--brief", "Return only task ID and first line of prompt (much smaller output).")
+		.action(async (options: { projectPath?: string; column?: ListTaskColumn; brief?: boolean }) => {
 			await runTaskCommand(
 				async () =>
 					await listTasks({
 						cwd: process.cwd(),
 						projectPath: options.projectPath,
 						column: options.column,
+						brief: options.brief,
+					}),
+			);
+		});
+
+	task
+		.command("open")
+		.description("Open a task to get its full prompt and a context_id for updating.")
+		.requiredOption("--task-id <id>", "Task ID.")
+		.option("--project-path <path>", "Workspace path. Defaults to current directory workspace.")
+		.action(async (options: { taskId: string; projectPath?: string }) => {
+			await runTaskCommand(
+				async () =>
+					await openTask({
+						cwd: process.cwd(),
+						taskId: options.taskId,
+						projectPath: options.projectPath,
 					}),
 			);
 		});
@@ -960,8 +1080,12 @@ export function registerTaskCommand(program: Command): void {
 
 	task
 		.command("update")
-		.description("Update an existing task.")
+		.description("Update an existing task. Requires --context-id from 'task open' to prevent stale overwrites.")
 		.requiredOption("--task-id <id>", "Task ID.")
+		.requiredOption(
+			"--context-id <id>",
+			"Context ID from 'task open'. Proves you read the current content before updating.",
+		)
 		.option("--prompt <text>", "Replacement task prompt.")
 		.option("--project-path <path>", "Workspace path. Defaults to current directory workspace.")
 		.option("--base-ref <branch>", "Replacement base branch/ref.")
@@ -971,6 +1095,7 @@ export function registerTaskCommand(program: Command): void {
 		.action(
 			async (options: {
 				taskId: string;
+				contextId: string;
 				prompt?: string;
 				projectPath?: string;
 				baseRef?: string;
@@ -983,6 +1108,7 @@ export function registerTaskCommand(program: Command): void {
 						await updateTaskCommand({
 							cwd: process.cwd(),
 							taskId: options.taskId,
+							contextId: options.contextId,
 							projectPath: options.projectPath,
 							prompt: options.prompt,
 							baseRef: options.baseRef,

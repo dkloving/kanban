@@ -24,6 +24,8 @@ export interface RuntimeUpdateTaskInput {
 	autoReviewMode?: RuntimeTaskAutoReviewMode;
 	images?: RuntimeTaskImage[];
 	baseRef: string;
+	contextId?: string;
+	updatedBy?: string;
 }
 
 function normalizeTaskAutoReviewMode(value: RuntimeTaskAutoReviewMode | null | undefined): RuntimeTaskAutoReviewMode {
@@ -98,8 +100,19 @@ function collectTaskIds(board: RuntimeBoardData): Set<string> {
 	return taskIds;
 }
 
+function generateUUID(): string {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	const b6 = bytes[6] ?? 0;
+	const b8 = bytes[8] ?? 0;
+	bytes[6] = (b6 & 0x0f) | 0x40; // version 4
+	bytes[8] = (b8 & 0x3f) | 0x80; // variant 1
+	const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function createDependencyId(): string {
-	return crypto.randomUUID().replaceAll("-", "").slice(0, 8);
+	return generateUUID().replaceAll("-", "").slice(0, 8);
 }
 
 function createDependencyPairKey(backlogTaskId: string, linkedTaskId: string): string {
@@ -282,6 +295,8 @@ export function addTaskToColumn(
 		baseRef,
 		createdAt: now,
 		updatedAt: now,
+		contextId: generateUUID(),
+		history: [],
 	};
 
 	const targetColumnIndex = board.columns.findIndex((column) => column.id === columnId);
@@ -584,6 +599,35 @@ export function updateTask(
 			if (card.id !== normalizedTaskId) {
 				return card;
 			}
+
+			// Validate contextId — required for optimistic locking
+			if (input.contextId !== undefined) {
+				const cardContextId = card.contextId;
+				if (!cardContextId) {
+					throw new Error(
+						`Task "${normalizedTaskId}" has no context ID yet. ` +
+							`Call open_task first to get one, then pass it to update_task.`,
+					);
+				}
+				if (input.contextId !== cardContextId) {
+					throw new Error(
+						`Context ID mismatch for task "${normalizedTaskId}". ` +
+							`The task has been modified since you opened it. ` +
+							`Use open_task to get the current version.`,
+					);
+				}
+			}
+
+			// Push current prompt to history if prompt is changing
+			const history = [...(card.history ?? [])];
+			if (prompt !== card.prompt) {
+				history.push({
+					prompt: card.prompt,
+					updatedAt: card.updatedAt,
+					updatedBy: input.updatedBy,
+				});
+			}
+
 			columnUpdated = true;
 			updatedTask = {
 				...card,
@@ -594,6 +638,8 @@ export function updateTask(
 				images: input.images === undefined ? card.images : cloneTaskImages(input.images),
 				baseRef,
 				updatedAt: now,
+				contextId: generateUUID(),
+				history,
 			};
 			return updatedTask;
 		});

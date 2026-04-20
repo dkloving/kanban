@@ -87,6 +87,13 @@ export const runtimeTaskImageSchema = z.object({
 });
 export type RuntimeTaskImage = z.infer<typeof runtimeTaskImageSchema>;
 
+export const runtimeBoardCardHistoryEntrySchema = z.object({
+	prompt: z.string(),
+	updatedAt: z.number(),
+	updatedBy: z.string().optional(),
+});
+export type RuntimeBoardCardHistoryEntry = z.infer<typeof runtimeBoardCardHistoryEntrySchema>;
+
 export const runtimeBoardCardSchema = z.object({
 	id: z.string(),
 	prompt: z.string(),
@@ -97,6 +104,8 @@ export const runtimeBoardCardSchema = z.object({
 	baseRef: z.string(),
 	createdAt: z.number(),
 	updatedAt: z.number(),
+	contextId: z.string().optional(),
+	history: z.array(runtimeBoardCardHistoryEntrySchema).optional(),
 });
 export type RuntimeBoardCard = z.infer<typeof runtimeBoardCardSchema>;
 
