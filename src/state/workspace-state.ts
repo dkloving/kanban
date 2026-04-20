@@ -19,6 +19,7 @@ import {
 import { createGitProcessEnv } from "../core/git-process-env";
 import { updateTaskDependencies } from "../core/task-board-mutations";
 import { type LockRequest, lockedFileSystem } from "../fs/locked-file-system";
+import { commitHistorySnapshot } from "./history-tracker";
 
 const RUNTIME_HOME_PARENT_DIR = ".cline";
 const RUNTIME_HOME_DIR = "kanban";
@@ -677,6 +678,8 @@ export async function saveWorkspaceState(
 			lock: null,
 		});
 
+		commitHistorySnapshot(context.workspaceId, `save-state: rev ${nextRevision}`);
+
 		return toWorkspaceStateResponse(context, board, sessions, nextRevision);
 	});
 }
@@ -697,6 +700,7 @@ export interface RuntimeWorkspaceAtomicMutationResponse<T> {
 export async function mutateWorkspaceState<T>(
 	cwd: string,
 	mutate: (state: RuntimeWorkspaceStateResponse) => RuntimeWorkspaceAtomicMutationResult<T>,
+	historyMessage?: string,
 ): Promise<RuntimeWorkspaceAtomicMutationResponse<T>> {
 	const context = await loadWorkspaceContext(cwd);
 	return await lockedFileSystem.withLock(getWorkspaceDirectoryLockRequest(context.workspaceId), async () => {
@@ -731,6 +735,8 @@ export async function mutateWorkspaceState<T>(
 		await lockedFileSystem.writeJsonFileAtomic(getWorkspaceMetaPath(context.workspaceId), nextMeta, {
 			lock: null,
 		});
+
+		commitHistorySnapshot(context.workspaceId, historyMessage ?? `mutation: rev ${nextRevision}`);
 
 		return {
 			value: mutation.value,
